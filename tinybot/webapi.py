@@ -13,6 +13,14 @@ class JsonRequestAPI:
     (Well, it can be even simpler but less flexible if you remove submethods)
     """
 
+    trace_methods = []
+    """
+    Methods whose successfule calls should not be logged.
+    For example, the getUpdates method from Telegram API is called
+    in a loop each 30 seconds overfilling the log with similar and
+    useless messages. 
+    """
+
     def __init__(self, name, link_pattern, token=None, predef_args=None):
         """
         :param name: name for User-Agent header
@@ -32,11 +40,15 @@ class JsonRequestAPI:
         to be the JSON object sent with POST request
         """
         kwargs.update(self.predef_args)
-        link = self.link_pattern.format(token=self.token or '{token}', method=method)
-        logger.debug('calling method %s %s', method, kwargs)
-        res = DynamicDictObject(self.session.post(link, json=kwargs).json())
-        logger.debug('received answer %s', res)
-        return type(self).process_result(self, res, method)
+        link = self.link_pattern.format(token=self.token, method=method)
+        cls = type(self)
+        log = method not in cls.trace_methods
+        if log:
+            logger.debug('calling method %s %s', method, kwargs)
+        res = DynamicDictObject(self.session.post(link, data=kwargs).json())
+        if log:
+            logger.debug('received answer %s', res)
+        return cls.process_result(self, res, method)
 
     @staticmethod
     def process_result(self, json, method):

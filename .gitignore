@@ -1,6 +1,9 @@
 # PyCharm project folder
 .idea/
 
+# Python virtualenv
+venv/
+
 # Compiled python modules.
 *.pyc
 

@@ -10,6 +10,7 @@ logger = tlogger.get('tinybot')
 
 
 class TelegramAPI(JsonRequestAPI):
+    trace_methods = ['getUpdates']
 
     def __init__(self, name, token):
         super().__init__(name, 'https://api.telegram.org/bot{token}/{method}', token)
@@ -29,6 +30,8 @@ class BotMeta(type):
     def __init__(cls, *args, **kwargs):
         super().__init__(*args, **kwargs)
         cls.name = cls.name or cls.__name__
+        cls.token = cls.token
+        cls.version = cls.version
         cls.full_name = cls.name + '/' + cls.version
         cls.__callbacks = None
 
@@ -50,6 +53,7 @@ class BotMeta(type):
             if handler is None:
                 logger.warning('received an update for \'%s\' update, but no handler exists for it', name)
                 continue
+            logger.debug('received update %s', update)
             try:
                 try:
                     param_name = list(signature(handler).parameters)[0]
@@ -84,10 +88,13 @@ class BotMeta(type):
         logger.info('starting longpoll loop with %s second timeout', timeout)
         with cls.create_api() as api:
             last = -1
-            while True:
-                for update in api.getUpdates(offset=last + 1, allowed_updates=cls.get_callbacks(), timeout=timeout):
-                    cls._process_update(update, api)
-                    last = update.update_id
+            try:
+                while True:
+                    for update in api.getUpdates(offset=last + 1, allowed_updates=cls.get_callbacks(), timeout=timeout):
+                        cls._process_update(update, api)
+                        last = update.update_id
+            except KeyboardInterrupt:
+                print('stopped longpoll loop due to interrupt signal')
 
     def launch_webhook(cls, url, local_port=None):
         """
@@ -130,7 +137,10 @@ class BotMeta(type):
 
             logger.info('starting webhook server at port %s' % local_port)
             server = HTTPServer(('', local_port), PostRequestHandler)
-            server.serve_forever()
+            try:
+                server.serve_forever()
+            except KeyboardInterrupt:
+                print('stopped webhook server due to interrupt signal')
 
 
 class Bot(metaclass=BotMeta):
