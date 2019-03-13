@@ -24,6 +24,6 @@ setup(name='tinybot',
           'Topic :: Utilities'
       ],
       license='MIT',
-      install_requires=['requests>=2,<3'],
+      install_requires=['requests>=2,<3', 'cryptography>=2,<3'],
       zip_safe=False,
       include_package_data=True)
