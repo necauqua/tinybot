@@ -1,8 +1,16 @@
+import os
 import argparse
 
 
-def run(bot_cls, description):
-    parser = argparse.ArgumentParser(description=description)
+def run(bot_cls):
+    """
+    Runs a little CLI for the bot. Used to give the token to a bot and to
+    choose between longpoll and webhook (and their config).
+
+    Funny, but it can be used as a decorator on the bot class.
+    """
+
+    parser = argparse.ArgumentParser(description=bot_cls.description)
     subparsers = parser.add_subparsers(
         metavar='type{longpoll, webhook}', dest='type',
         help='Technique used for listening to updates.\n'
@@ -46,10 +54,12 @@ def run(bot_cls, description):
 
     args = parser.parse_args()
 
-    bot_cls.token = args.token
     if args.type is None:
         parser.parse_args(['-h'])
-    elif args.type == 'longpoll':
+        return
+
+    bot_cls.token = getattr(args, 'token', os.getenv('TELEGRAM_BOT_TOKEN'))
+    if args.type == 'longpoll':
         bot_cls.launch_longpoll(args.timeout)
     elif args.type == 'webhook':
         bot_cls.launch_webhook(args.url, args.port)

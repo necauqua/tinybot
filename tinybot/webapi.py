@@ -1,88 +1,131 @@
-
+import json
 import requests
+
+from urllib.parse import urlencode
+from io import IOBase
+
 import tinybot.logger as tlogger
 
-__all__ = ('JsonRequestAPI', 'DynamicDictObject', 'NoSuchElementException', 'RequestException')
+__all__ = ('TelegramAPI', 'DynamicDictObject', 'RequestException', 'NoSuchElementException')
 
 logger = tlogger.get('tinybot.webapi')
 
 
-class JsonRequestAPI:
+class TelegramAPI:
     """
-    The simplest web-request API you could possibly make.
-    (Well, it can be even simpler but less flexible if you remove submethods)
-    """
-
-    trace_methods = []
-    """
-    Methods whose successfule calls should not be logged.
-    For example, the getUpdates method from Telegram API is called
-    in a loop each 30 seconds overfilling the log with similar and
-    useless messages. 
+    The simplest web-request API for something like Telegram you could possibly make.
     """
 
-    def __init__(self, name, link_pattern, token=None, predef_args=None):
-        """
-        :param name: name for User-Agent header
-        :param link_pattern: URL pattern for the POST request, with {token} and {method} placeholders
-        :param token: optional token which is used only to replace itself in link pattern
-        :param predef_args: args which will be sent with each request, token might be stored here instead
-        """
-        self.link_pattern, self.token, self.predef_args = link_pattern, token, predef_args or {}
-        self.session = requests.Session()
-        self.session.headers['User-Agent'] = name
-        self.session.headers['Accept'] = 'application/json'
+    trace_methods = ['getUpdates']
+    """
+    Methods whose successful calls should not be logged.
+    For example, when longpolling, the getUpdates method from Telegram API is
+    called in a loop each 'timeout' seconds overfilling the log with similar
+    and useless messages. 
+    """
 
-    @staticmethod
-    def send_request(self, method, **kwargs):
+    def __init__(self, name, token):
         """
-        Actually sends the request with given method to be replaced in link pattern and **kwargs
-        to be the JSON object sent with POST request
+        :param name: name for the User-Agent header
+        :param token: the token for the Telegram Bot API
         """
-        kwargs.update(self.predef_args)
-        link = self.link_pattern.format(token=self.token, method=method)
-        cls = type(self)
-        log = method not in cls.trace_methods
+        self.__url = 'https://api.telegram.org/bot%s/' % token
+        self.__file_url = 'https://api.telegram.org/file/bot%s/' % token
+        self.__session = requests.Session()
+        self.__session.headers['User-Agent'] = name
+        self.__session.headers['Accept'] = 'application/json'
+
+    def request(self, method, **kwargs):
+        """
+        Send the request with given method and kwargs as JSON or URL query
+        arguments (query is used when files are sent).
+
+        If any value in kwargs at any nesting level is an instance of IOBase
+        then the request is sent as multipart/form-data (and the rest of the
+        args as part URL query instead of JSON body) with that value attached
+        as file and it's entry in kwargs replaced by 'attach://name' as
+        Telegram understands it.
+        Name is either choosen sequentially (like 'file_0', 'file_1', and so
+        on) or instead of a pure IOBase file parameter can be specified as a
+        tuple (str, IOBase) for custom file name.
+        """
+
+        def extract_files(obj):
+            fs, idx = {}, 0
+
+            def rec(v):
+                if isinstance(v, list):
+                    return [rec(x) for x in v]
+                if isinstance(v, dict):
+                    return {k: rec(v) for k, v in v.items()}
+
+                nonlocal fs, idx
+                if isinstance(v, tuple) and len(v) == 2 and isinstance(v[1], IOBase):
+                    name = str(v[0])
+                    fs[name] = v[1]
+                    return 'attach://' + name
+                if isinstance(v, IOBase):
+                    name = 'file_' + str(idx)
+                    idx += 1
+                    fs[name] = v
+                    return 'attach://' + name
+                return v
+
+            return rec(obj), fs
+
+        args, files = extract_files(kwargs)
+
+        log = method not in self.trace_methods
+
         if log:
-            logger.debug('calling method %s %s', method, kwargs)
-        res = DynamicDictObject(self.session.post(link, data=kwargs).json())
+            logger.debug('calling method %s %s', method, args)
+
+        if files:
+            query = urlencode({k: json.dumps(v) if isinstance(v, (list, dict)) else str(v) for k, v in args.items()})
+            response = self.__session.post(self.__url + method + '?' + query, files=files)
+        else:
+            response = self.__session.post(self.__url + method, json=args)
+
+        data = DynamicDictObject(response.json())
+
         if log:
-            logger.debug('received answer %s', res)
-        return cls.process_result(self, res, method)
+            logger.debug('received answer %s', data)
 
-    @staticmethod
-    def process_result(self, json, method):
-        """
-        Used to convert the result if such conversion is needed.
-        RequestException can be thrown if the result is erroneous in any way
-        to prevent further processing.
-        """
-        return json
+        if 'ok' in data:
+            if data.ok and 'result' in data:
+                return data.result
+            if 'description' in data:
+                raise RequestException('server error calling \'%s\': %s' % (method, data.description))
+        raise RequestException('bad response: %s' % data)
 
-    @staticmethod
-    def close_api(self):
+    def close(self):
         """Closes the requests session, using with-construct is advised instead of this"""
-        self.session.close()
+        self.__session.close()
 
-    class Submethod:
+    def download(self, file_id):
+        """Small util function to get the file content from given file_id."""
+        return self.__session.get(self.__file_url + self.getFile(file_id=file_id).file_path).content
+
+    class Method:
 
         def __init__(self, api, method):
-            self.api, self.method = api, method
+            self.__api = api
+            self.__method = method
 
         def __call__(self, **kwargs):
-            return JsonRequestAPI.send_request(self.api, self.method, **kwargs)
+            return self.__api.request(self.__method, **kwargs)
 
         def __getattr__(self, item):
-            return JsonRequestAPI.Submethod(self.api, self.method + '.' + item)
+            return TelegramAPI.Method(self.__api, self.__method + '.' + item)
 
     def __getattr__(self, item):
-        return JsonRequestAPI.Submethod(self, item)
+        return TelegramAPI.Method(self, item)
 
     def __enter__(self):
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        JsonRequestAPI.close_api(self)
+        self.close()
 
 
 class DynamicDictObject:
@@ -92,35 +135,54 @@ class DynamicDictObject:
     """
 
     def __new__(cls, peer, path=''):
-        if peer is None:
-            raise NoSuchElementException(path[1:])
         if not isinstance(peer, (dict, list)):
             return peer
         return super().__new__(cls)
 
-    def __init__(self, peer, path=None):
-        self.__peer, self.__path = peer, path or ''
+    def __init__(self, peer, path=''):
+        self.__peer, self.__path = peer, path
 
     @staticmethod
     def set_path(self, path):
         self.__path = '.' + path
 
+    def items(self):
+        peer = self.__peer
+        if not isinstance(peer, dict):
+            raise NoSuchElementException(f'Expected an object at {self.__path[1:]}, but it was '
+                                         f'\'{type(peer).__name__}\'')
+        return map(lambda k: (k, self[k]), peer)
+
     def __getattr__(self, item):
         peer = self.__peer
         if not isinstance(peer, dict):
-            raise NoSuchElementException('Expected a dict at %s, but is was a list' % self.__path)
-        return DynamicDictObject(peer.get(item), '%s.%s' % (self.__path, item))
+            raise NoSuchElementException(f'Expected an object at \'{self.__path[1:]}\', but it was '
+                                         f'\'{type(peer).__name__}\'')
+        path = f'{self.__path}.{item}'
+        try:
+            child = peer[item]
+            # callables without arguments treated as properties
+            # and callables with arguments are prohibited
+            while callable(child):
+                child = child()
+        except (TypeError, KeyError):
+            raise NoSuchElementException(path[1:]) from None
+        return DynamicDictObject(child, path)
 
     def __getitem__(self, item):
-        child = None
-        if isinstance(self.__peer, list):
-            try:
-                child = self.__peer[item]
-            except IndexError:
-                pass
+        if isinstance(item, str) and item.isidentifier():
+            path = f'{self.__path}.{item}'
         else:
-            child = self.__peer.get(item)
-        return DynamicDictObject(child, '%s[%s]' % (self.__path, repr(item)))
+            path = f'{self.__path}[{repr(item)}]'
+        peer = self.__peer
+        try:
+            child = peer[item]
+        except TypeError:
+            raise NoSuchElementException(f'Tried to index \'{type(peer).__name__}\' at {self.__path[1:]} with key of '
+                                         f'type \'{type(item).__name__}\'') from None
+        except (KeyError, IndexError):
+            raise NoSuchElementException(path[1:]) from None
+        return DynamicDictObject(child, path)
 
     def __contains__(self, item):
         if isinstance(self.__peer, dict):
@@ -128,7 +190,11 @@ class DynamicDictObject:
         return False
 
     def __iter__(self):
-        return map(DynamicDictObject, iter(self.__peer))
+        if isinstance(self.__peer, list):
+            path = self.__path
+            return map(lambda x: DynamicDictObject(x[1], f'{path}[{x[0]}]'), enumerate(self.__peer))
+
+        return iter(self.__peer)
 
     def __repr__(self):
         return repr(self.__peer)
