@@ -1,12 +1,11 @@
+import asyncio
 import json
-import requests
-
-from urllib.parse import urlencode
 from io import IOBase
+from urllib.parse import urlencode
 
 import tinybot.logger as tlogger
 
-__all__ = ('TelegramAPI', 'DynamicDictObject', 'RequestException', 'NoSuchElementException')
+__all__ = ('TelegramAPI', 'BlockingTelegramAPI', 'DynamicDictObject', 'RequestException', 'NoSuchElementException')
 
 logger = tlogger.get('tinybot.webapi')
 
@@ -24,18 +23,16 @@ class TelegramAPI:
     and useless messages. 
     """
 
-    def __init__(self, name, token):
+    def __init__(self, session, token):
         """
-        :param name: name for the User-Agent header
+        :param session: aihttp client session to be used for making requests
         :param token: the token for the Telegram Bot API
         """
+        self.__session = session
         self.__url = 'https://api.telegram.org/bot%s/' % token
         self.__file_url = 'https://api.telegram.org/file/bot%s/' % token
-        self.__session = requests.Session()
-        self.__session.headers['User-Agent'] = name
-        self.__session.headers['Accept'] = 'application/json'
 
-    def request(self, method, **kwargs):
+    async def request(self, method, **kwargs):
         """
         Send the request with given method and kwargs as JSON or URL query
         arguments (query is used when files are sent).
@@ -82,11 +79,11 @@ class TelegramAPI:
 
         if files:
             query = urlencode({k: json.dumps(v) if isinstance(v, (list, dict)) else str(v) for k, v in args.items()})
-            response = self.__session.post(self.__url + method + '?' + query, files=files)
+            response = await self.__session.post(self.__url + method + '?' + query, files=files)
         else:
-            response = self.__session.post(self.__url + method, json=args)
+            response = await self.__session.post(self.__url + method, json=args)
 
-        data = DynamicDictObject(response.json())
+        data = DynamicDictObject(json.loads(await response.read()))
 
         if log:
             logger.debug('received answer %s', data)
@@ -98,13 +95,13 @@ class TelegramAPI:
                 raise RequestException('server error calling \'%s\': %s' % (method, data.description))
         raise RequestException('bad response: %s' % data)
 
-    def close(self):
-        """Closes the requests session, using with-construct is advised instead of this"""
-        self.__session.close()
-
-    def download(self, file_id):
+    async def download(self, file_id):
         """Small util function to get the file content from given file_id."""
-        return self.__session.get(self.__file_url + self.getFile(file_id=file_id).file_path).content
+        file = await self.getFile(file_id=file_id)
+        return await self.__session.get(self.__file_url + file.file_path).read()
+
+    def __getattr__(self, item):
+        return TelegramAPI.Method(self, item)
 
     class Method:
 
@@ -112,20 +109,42 @@ class TelegramAPI:
             self.__api = api
             self.__method = method
 
-        def __call__(self, **kwargs):
-            return self.__api.request(self.__method, **kwargs)
-
         def __getattr__(self, item):
             return TelegramAPI.Method(self.__api, self.__method + '.' + item)
 
+        def __call__(self, **kwargs):
+            request = self.__api.request(self.__method, **kwargs)
+            request.__name__ = self.__method
+            request.__qualname__ = 'TelegramAPI.' + self.__method
+            return request
+
+
+class BlockingTelegramAPI:
+
+    def __init__(self, api, loop):
+        self.__api = api
+        self.__loop = loop
+
+    def request(self, method, **kwargs):
+        return asyncio.run_coroutine_threadsafe(self.__api.request(method, **kwargs), self.__loop).result()
+
+    def download(self, file_id):
+        return asyncio.run_coroutine_threadsafe(self.__api.download(file_id), self.__loop).result()
+
     def __getattr__(self, item):
-        return TelegramAPI.Method(self, item)
+        return BlockingTelegramAPI.Method(self, item)
 
-    def __enter__(self):
-        return self
+    class Method:
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.close()
+        def __init__(self, api, method):
+            self.__api = api
+            self.__method = method
+
+        def __getattr__(self, item):
+            return BlockingTelegramAPI.Method(self.__api, self.__method + '.' + item)
+
+        def __call__(self, **kwargs):
+            return self.__api.request(self.__method, **kwargs)
 
 
 class DynamicDictObject:
@@ -152,6 +171,12 @@ class DynamicDictObject:
             raise NoSuchElementException(f'Expected an object at {self.__path[1:]}, but it was '
                                          f'\'{type(peer).__name__}\'')
         return map(lambda k: (k, self[k]), peer)
+
+    def get(self, item):
+        try:
+            return self[item]
+        except NoSuchElementException:
+            return None
 
     def __getattr__(self, item):
         peer = self.__peer

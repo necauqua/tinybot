@@ -1,5 +1,6 @@
-import os
 import argparse
+import asyncio
+import os
 
 
 def run(bot_cls):
@@ -63,3 +64,23 @@ def run(bot_cls):
         bot_cls.launch_longpoll(args.timeout)
     elif args.type == 'webhook':
         bot_cls.launch_webhook(args.url, args.port)
+
+
+def debug_run(longpoll_timeout=30, token=None, tokenfile=None, tokenenv=None):
+    """
+    Decorator for the bot class that will run it in longpoll mode.
+    This exists only for debugging, you are advised to use @run and command
+    line args instead.
+    """
+    def decorator(bot_cls):
+        if token:
+            bot_cls.token = token
+        elif tokenfile:
+            with open(tokenfile, 'r') as f:
+                line = f.readline().strip()
+                bot_cls.token = line[line.index('=') + 1:] if '=' in line else line
+        elif tokenenv:
+            bot_cls.token = os.getenv(tokenenv)
+        bot_cls.launch_longpoll(longpoll_timeout)
+
+    return decorator
