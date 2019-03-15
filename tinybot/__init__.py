@@ -14,33 +14,43 @@ logger = tlogger.get('tinybot')
 
 
 def setup_handlers(cls, api):
-    instance = cls()
     handlers = {}
+    instance = cls()
+
+    loop = asyncio.get_event_loop()
+    blocking_api = BlockingTelegramAPI(api, loop)
+
     for k in dir(cls):
         if not k.startswith('handle_'):
             continue
+
         name = k[7:]
-        func = getattr(instance, 'handle_' + name, None)
+        func = getattr(instance, f'handle_{name}', None)
+
         if func is None:
             logger.warning('received an update for \'%s\' update, but no handler exists for it', name)
             continue
 
-        if not iscoroutinefunction(func):
-            loop = asyncio.get_event_loop()
-            blocking_api = BlockingTelegramAPI(api, loop)
+        def create_handler(f):
+            try:
+                param_name = list(signature(f).parameters)[0]
+            except ValueError:
+                param_name = '<root>'
 
-            async def handler(d):
-                return await loop.run_in_executor(None, lambda: func(d, blocking_api))
-        else:
-            def handler(d):
-                return func(d, api)
+            if iscoroutinefunction(f):
+                return lambda d: f(d.with_root(param_name), api)
 
-        handlers[name] = handler
+            async def asynced(d):
+                return await loop.run_in_executor(None, lambda: f(d.with_root(param_name), blocking_api))
+
+            return asynced
+
+        handlers[name] = create_handler(func)
     return handlers
 
 
-async def receive_update(handlers, update):
-    for name in update:
+async def handle_update(handlers, update):
+    for name, data in update.items():
         if name == 'update_id':
             continue
 
@@ -50,21 +60,15 @@ async def receive_update(handlers, update):
 
         # noinspection PyBroadException
         try:
-            data = update[name]
             logger.debug('received \'%s\' update %s', name, data)
-            try:
-                param_name = list(signature(handler).parameters)[0]
-            except ValueError:
-                param_name = '<root>'
-
-            DynamicDictObject.set_path(data, param_name)
 
             await handler(data)
 
             logger.debug('handled \'%s\' update successfully', name)
-        except RequestException as e:
+
+        except (RequestError, DynamicTypeError) as e:
             logger.warning('failed handling \'%s\' update, %s', name, e.args[0])
-        except NoSuchElementException as e:
+        except NoSuchElementError as e:
             logger.warning('failed handling \'%s\' update, no item \'%s\' found', name, e.args[0])
         except Exception:
             logger.error('unchecked exception while handling \'%s\' update:', name)
@@ -147,7 +151,7 @@ class Bot:
 
                 while True:
                     for update in await api.getUpdates(offset=last_id + 1, allowed_updates=callbacks, timeout=timeout):
-                        tasks.append(asyncio.ensure_future(receive_update(handlers, update)))
+                        tasks.append(asyncio.ensure_future(handle_update(handlers, update)))
                         last_id = update.update_id
 
                     while len(tasks) > 100:
@@ -199,7 +203,7 @@ class Bot:
 
                         post_data = self.rfile.read(int(self.headers.get('Content-Length', 0)))
                         data = json.loads(str(post_data, encoding='utf-8'))
-                        receive_update(cls, DynamicDictObject(data))
+                        handle_update(cls, DynamicDictObject(data))
 
                     def log_message(self, fmt, *args):
                         server_logger.debug(fmt, *args)
