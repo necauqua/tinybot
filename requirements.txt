@@ -1,2 +1,5 @@
 requests==2.22.0
 cryptography==2.7
+aiohttp==3.5.4
+aiodns==2.0.0
+cchardet==2.1.4
