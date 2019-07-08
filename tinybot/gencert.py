@@ -12,12 +12,18 @@ def gencert(domain):
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048, backend=default_backend())
     name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, domain)])
     now = datetime.utcnow()
-    return x509.CertificateBuilder() \
+
+    certificate = x509.CertificateBuilder() \
         .subject_name(name) \
         .issuer_name(name) \
         .public_key(key.public_key()) \
         .serial_number(x509.random_serial_number()) \
         .not_valid_before(now) \
         .not_valid_after(now + timedelta(days=10)) \
-        .sign(key, SHA256(), default_backend()) \
-        .public_bytes(Encoding.PEM)
+        .sign(key, SHA256(), default_backend())
+
+    return certificate.public_bytes(Encoding.PEM)
+
+
+if __name__ == '__main__':
+    print(gencert('necauqua.dev').decode('utf-8'))

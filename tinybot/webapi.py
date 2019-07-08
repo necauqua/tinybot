@@ -1,6 +1,9 @@
+import asyncio
 import json
 from asyncio import run_coroutine_threadsafe
+from datetime import datetime, timedelta
 from io import IOBase
+from traceback import print_exc
 
 from aiohttp import MultipartWriter
 
@@ -57,9 +60,7 @@ class TelegramAPI(Submethods):
         self.__token = token
         self.__url = 'https://api.telegram.org/bot%s/' % token
         self.__file_url = 'https://api.telegram.org/file/bot%s/' % token
-
-    def call(self, method, **kwargs):
-        return self.request(method, **kwargs)
+        self.__file_link_cache = {}
 
     def request(self, method, **kwargs):
         """
@@ -90,12 +91,12 @@ class TelegramAPI(Submethods):
                     if isinstance(v, tuple) and len(v) == 2 and isinstance(v[1], IOBase):
                         name = str(v[0])
                         fs[name] = v[1]
-                        return 'attach://' + name
+                        return f'attach://{name}'
                     if isinstance(v, IOBase):
-                        name = 'file_' + str(idx)
+                        name = f'file_{idx}'
                         idx += 1
                         fs[name] = v
-                        return 'attach://' + name
+                        return f'attach://{name}'
                     return v
 
                 return rec(obj), fs
@@ -105,7 +106,7 @@ class TelegramAPI(Submethods):
             log = method not in self.trace_methods
 
             if log:
-                logger.debug('calling method %s %s', method, args)
+                logger.debug(f'calling method {method} {args}')
 
             if files:
                 params = {k: json.dumps(v) if isinstance(v, (list, dict)) else str(v) for k, v in args.items()}
@@ -121,23 +122,79 @@ class TelegramAPI(Submethods):
             data = DynamicDictObject(await response.json())
 
             if log:
-                logger.debug('received answer %s', data)
+                logger.debug(f'received answer {data}')
 
             if 'ok' in data:
                 if data.ok and 'result' in data:
                     return data.result
                 if 'description' in data:
-                    raise RequestError('server error calling \'%s\': %s' % (method, data.description))
-            raise RequestError('bad response: %s' % data)
+                    raise RequestError(f'server error calling \'{method}\': {data.description}')
+            raise RequestError(f'bad response: {data}')
 
         c = coroutine()
         c.__name__ = method
         c.__qualname__ = f'TelegramAPI.{method}'
         return c
 
+    call = request
+
+    class SafeWrapper(Submethods):
+        """
+        This is a wrapper around the request method, that catches any errors and retries the request
+        until provided limit of consecutive errors is reached. Those errors are logged.
+        """
+
+        def __init__(self, api, retries):
+            self.__api = api
+            self.__retries = retries
+
+        async def call(self, method, *args, **kwargs):
+            retries = self.__retries
+            api = self.__api
+            tries = 0
+            while True:
+                try:
+                    tries += 1
+                    return await api.request(method, **kwargs)
+                except:
+                    if tries >= retries:
+                        logger.error(f'{method} call failed {retries} time{retries == 1 and "" or "s"}')
+                        raise
+                    else:
+                        logger.warning(f'{method} call failed, retry #{tries} in 1 second...')
+                        print_exc()
+                        await asyncio.sleep(1)
+
+    def safe(self, retries=5):
+        return TelegramAPI.SafeWrapper(self, retries) if retries > 1 else self
+
+    async def get_file_cached(self, file_id):
+        """
+        This is a cached version of the getFile API call.
+        Telegram servers `guarantee <https://core.telegram.org/bots/api#getfile>`_
+        that the link they provide is valid for at least one hour, so we cache the links for that one hour.
+        This method is recommended to use when your bot deals with a lot of file work.
+        """
+        entry = self.__file_link_cache.get(file_id)
+        now = datetime.utcnow()
+
+        if entry is not None and entry[0] < now:
+            return entry[1]
+
+        request_coroutine = self.getFile(file_id=file_id)
+
+        # and while the real request is processed we cleanup old entries, idk how ok this is
+        self.__file_link_cache = {k: v for k, v in self.__file_link_cache.items() if v[0] >= now}
+
+        file = await request_coroutine
+        self.__file_link_cache[file_id] = (now + timedelta(hours=1), file)
+        return file
+
     async def download(self, file_id):
-        """Small util function to get the file content from given file_id."""
-        file = await self.getFile(file_id=file_id)
+        """
+        A util function to download the file from identified by given file_id.
+        """
+        file = await self.get_file_cached(file_id)
         response = await self.__session.get(self.__file_url + file.file_path)
         return await response.read()
 
@@ -253,13 +310,17 @@ class DynamicDictObject:
         return repr(self.__peer)
 
 
-class RequestError(Exception):
+class IncorrectHandlerError(Exception):
     pass
 
 
-class NoSuchElementError(Exception):
+class RequestError(IncorrectHandlerError):
     pass
 
 
-class DynamicTypeError(Exception):
+class NoSuchElementError(IncorrectHandlerError):
+    pass
+
+
+class DynamicTypeError(IncorrectHandlerError):
     pass
