@@ -27,13 +27,6 @@ def setup_handlers(cls, api):
         if not k.startswith('handle_'):
             continue
 
-        name = k[7:]
-        func = getattr(instance, f'handle_{name}', None)
-
-        if func is None:
-            logger.warning('received an update for \'%s\' update, but no handler exists for it', name)
-            continue
-
         def create_handler(f):
             try:
                 param_name = list(signature(f).parameters)[0]
@@ -48,7 +41,7 @@ def setup_handlers(cls, api):
 
             return asynced
 
-        handlers[name] = create_handler(func)
+        handlers[k[7:]] = create_handler(getattr(instance, k))
     return handlers
 
 
