@@ -35,7 +35,7 @@ if __name__ == '__main__':
     Assistant.launch_longpoll(30)
 
     # tinybot.run is a ready-to-use CLI for launching longpoll or webhook and providing the token
-    # tinybot.run(Assistant, 'necauqua assistant bot')
+    # tinybot.run(Assistant)
 
 ```
 
@@ -44,21 +44,30 @@ Your bot is a class which derives from `tinybot.Bot` class.
 You can start it with a ready-to-use CLI using this standard construct
 ```python
 if __name__ == '__main__':
-    tinybot.run(bot_cls, bot_description)
+    tinybot.run(bot_cls)
 ```
-All of the bot's logic is defined inside the class deriven from `tinybot.Bot`.
+Since `tinybot.run` accepts one argument which is the bot class, it can be used as a decorator
+if you don't need the `__name__ == '__main__` check.
 
-It have static fields `name`, `version`,`full_name` and `token`.
+The class deriving `tinybot.Bot` defines all logic for the bot.
+
+Class `tinybot.Bot` has the following overridable static fields:
 * `name` defaults to the class name and is the name of your bot. Used in `full_name`
 * `version` is a version of your bot, it defaults to `0.1.0`. Used in `full_name`.
 * `full_name` defaults to `name/version`.
 It is used as a `User-Session` header when making requests, and as `Server` header when
 responding to Telegram from a webhook server.
+* `description` is a text that will be shown in CLI help, defaults to `Telegram Bot`
 * `token` is an optional field, because usually it is set from command line when running `tinybot.run`.
 However, it might be useful for debugging.
 It is obviously the token which is used for all requests.
+* `longpoll_retries` is used only in longpoll mode and defines the number of consecutive
+failed longpoll retries after which the longpoll loop will stop the application.
+So when using longpolling you might want to setup systemd or something to disable/reenable the bot
+on network shutdowns.
 
 Your class should define methods with signarure `handle_xxx(self, data, api)` where `xxx` is one of the update types found [here](https://core.telegram.org/bots/api#getting-updates).
+This was not hardcoded in any way, so if Telegram ever adds another update type, it will work right away.
 
 For example:
 ```python
@@ -66,7 +75,7 @@ def handle_message(self, message, api): pass
 # or
 def handle_channel_post(self, post, api): pass
 ```
-* `self` parameter can contain some additional data, for now it only contains the `update_id` field.
+* `self` parameter contains known additional data, for now it only contains the `update_id` field.
 * `data` parameter is a dict/list-like recursive structure made with `__getattr__`'s
 and `__getitems__`'s in which the received Update JSON object is given.
 When you try to get a nonexistent field, `NoSuchElementException` is raised and
@@ -87,5 +96,6 @@ That way, if any of the data weren't available, any of your mutating requests wo
 
 ## License
 It is licensed under permissive MIT license which means you can use this code in
-whatever way possible, as long as you include the LICENSE file (by which you mention my authorship).
-It is included in the package so you have to do nothing yourself when simply using this library.
+whatever way possible, as long as you include the LICENSE file (by which you mention my authorship,
+since it has my name at the top of it).
+It is included in the package, so you have to do nothing yourself when simply using this library.

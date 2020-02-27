@@ -50,7 +50,7 @@ def run(bot_cls):
 
     webhook_parser.add_argument('token', help='The token of given bot')
     webhook_parser.add_argument('port', type=ranged_int(0, 65535), help='Local port to listen at')
-    webhook_parser.add_argument('url', help='URL which will be set as the webhook link.')
+    webhook_parser.add_argument('domain', help='The domain which will be used for the webhook link.')
 
     args = parser.parse_args()
 
@@ -62,7 +62,7 @@ def run(bot_cls):
     if args.type == 'longpoll':
         bot_cls.launch_longpoll(args.timeout)
     elif args.type == 'webhook':
-        bot_cls.launch_webhook(args.url, args.port)
+        bot_cls.launch_webhook(args.domain, args.port)
 
 
 def debug_run(longpoll_timeout=30, token=None, tokenfile=None, tokenenv=None):

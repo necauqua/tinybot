@@ -108,14 +108,14 @@ class Bot:
     name = None
     """Name of the bot, defaults to class name"""
 
+    version = '0.1.0'
+    """Version of the bot"""
+
     full_name = None
     """Full name of the bot, defaults to 'name/version'"""
 
     description = 'Telegram Bot'
     """Optional extended description of the bot, right now it is only used in CLI help"""
-
-    version = '0.1.0'
-    """Version of the bot"""
 
     token = None
     """Token to be used by this bot, usually not set directly in class definition"""
@@ -128,19 +128,13 @@ class Bot:
         cls.full_name = cls.name + '/' + cls.version
 
     @classmethod
-    async def update_webhook(cls, api, url, allowed_updates, max_connections=40):
+    async def update_webhook(cls, api, url, allowed_updates, max_connections=40, use_self_signed_cert=False):
         """
         Overridable if for whatever reason Telegram API for webhooks changes
         """
-
-        url = url + '/' + cls.token
-
-        logger.info('getting webhook info')
-
         safe_api = api.safe()
-
+        logger.info('getting webhook info')
         info = await safe_api.getWebhookInfo()
-
         if info.url != url \
                 or set(info.allowed_updates) != set(allowed_updates) \
                 or info.get('max_connections') != max_connections:
@@ -182,15 +176,10 @@ class Bot:
             logger.info('stopped longpoll loop due to an interrupt signal')
 
     @classmethod
-    def launch_webhook(cls, url, local_port=None):
+    def launch_webhook(cls, domain, port):
         """
         Starts the webhook server (automatically setting the webhook data) with port.
         """
-
-        # url is optional so shift args accordingly
-        if local_port is None:
-            local_port = url
-            url = None
 
         from aiohttp import web
 
@@ -200,8 +189,8 @@ class Bot:
                 api = TelegramAPI(session, token)
                 handlers = setup_handlers(cls, api)
 
-                if url is not None:
-                    await cls.update_webhook(api, url, list(handlers.keys()))
+                url = 'https://{}:{}/{}'.format(domain, port, cls.token)
+                await cls.update_webhook(api, url, list(handlers.keys()))
 
                 last_update = 0
 
@@ -221,7 +210,7 @@ class Bot:
 
                     update_id = update.update_id
                     if update_id <= last_update:
-                        # repeated update of some kind, ignore it
+                        # a repeated update of some kind, ignore it
                         return web.Response()
 
                     if await handle_update(handlers, update):
@@ -231,9 +220,9 @@ class Bot:
 
                 server = web.ServerRunner(web.Server(receive_update), handle_signals=True)
                 await server.setup()
-                await web.TCPSite(server, port=local_port, ssl_context=None).start()
+                await web.TCPSite(server, port=port, ssl_context=None).start()
 
-                logger.info('starting webhook server at port %s' % local_port)
+                logger.info('starting webhook server at port %s' % port)
 
                 while True:
                     await asyncio.sleep(3600)

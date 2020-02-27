@@ -40,7 +40,7 @@ class Submethods:
 
 class TelegramAPI(Submethods):
     """
-    Very simple async web-request Python binding to the Telegram Bot API.
+    Simple async web-request Python binding to the Telegram Bot API.
     """
 
     trace_methods = ['getUpdates']
