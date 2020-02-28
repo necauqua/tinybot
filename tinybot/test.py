@@ -15,7 +15,10 @@ if __name__ == '__main__':
         line = f.readline().strip()
         TestBot.token = line[line.find('=') + 1:]
 
-        async def action(api):
+        async def action(api: tinybot.TelegramAPI):
+
+            print(await api.sendDocument(chat_id='2342352'))
+
             # await api.sendDocument(chat_id='590866023', document=('test.txt', io.StringIO('some test file')))
             await api.sendDocument(chat_id='325827733', document=('test.txt', io.StringIO('some test file')))
 
