@@ -3,7 +3,6 @@ from asyncio import iscoroutinefunction
 from inspect import signature
 from json import JSONDecodeError
 from traceback import print_exc
-from typing import Callable, Union
 
 from aiohttp import ClientSession
 from aiohttp.web_runner import GracefulExit
@@ -234,7 +233,7 @@ class Bot:
             logger.info('stopped webhook server due to an interrupt signal')
 
     @classmethod
-    async def run(cls, callback: Callable[[Union[TelegramAPI, BlockingTelegramAPI]], None], retries=5):
+    async def run(cls, callback, retries=5):
         """
         Imperatively does some action with the bot. Given callback is ran with an api argument.
         The callback works in the same way as bot handlers - if it is async then it's given the
