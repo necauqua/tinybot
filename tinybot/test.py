@@ -11,7 +11,6 @@ class TestBot(tinybot.Bot):
 
 
 if __name__ == '__main__':
-
     import tinybot.typez
 
     print(tinybot.typez.User(123, True, 'testbot'))
@@ -25,6 +24,7 @@ if __name__ == '__main__':
         async def action(api: tinybot.TelegramAPI):
 
             # await api.send_document(chat_id='590866023', document=('test.txt', io.StringIO('some test file')))
-            await api.send_document(chat_id='325827733', document=('test.txt', io.StringIO('some test file')))
+            res = await api.send_document(chat_id='325827733', document=('test.txt', io.StringIO('some test file')))
+
 
         TestBot.run_blocking(action)
